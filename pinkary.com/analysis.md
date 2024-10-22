@@ -1,4 +1,4 @@
-# Laravel Code Analysis
+# Lessons from the pinkary.com code
 
 ## Design Patterns
 
