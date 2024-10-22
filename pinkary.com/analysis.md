@@ -1,107 +1,103 @@
-# Pinkary Design Patterns and Best Practices Analysis
+# Laravel Code Analysis
 
-## 1. Interface Implementation Pattern
-This pattern defines contracts (interfaces) that classes must implement, ensuring consistent behavior across different implementations.
+## Design Patterns
+
+### 1. Observer Pattern
+The Observer pattern is used to handle events and notifications when models change. Laravel provides a built-in way to implement observers.
+
+Example from `App/Observers/QuestionObserver.php`:
+```php
+// This observer watches for changes on the Question model
+public function updated(Question $question): void
+{
+    // When a question is updated, this code runs
+    $question->loadMissing('from', 'to');
+
+    if ($question->is_ignored || $question->is_reported) {
+        $this->deleted($question);
+        return;
+    }
+    
+    // Remove notifications when question is answered
+    if ($question->answer !== null) {
+        $question->to->notifications()->whereJsonContains('data->question_id', $question->id)->delete();
+    }
+}
+```
+
+Usage in `App/Models/Question.php`:
+```php
+#[ObservedBy(QuestionObserver::class)]
+final class Question extends Model implements Viewable
+```
+
+[Laravel Events Documentation](https://laravel.com/docs/11.x/events)
+
+### 2. Interface Implementation
+Interfaces are used to define contracts that classes must fulfill. This ensures consistent behavior across different implementations.
 
 Example from `App/Contracts/Models/Viewable.php`:
 ```php
+// This interface defines a contract for models that can be viewed
 interface Viewable
 {
-    // Defines a contract that any model supporting view counts must implement
+    // Any class implementing this interface must have this method
     public static function incrementViews(array $ids): void;
 }
 ```
 
-Used in `App/Models/User.php` and `App/Models/Question.php`:
+Implementation in `App/Models/Question.php`:
 ```php
-// Both classes implement the same interface, ensuring consistent view counting behavior
-class User extends Authenticatable implements FilamentUser, MustVerifyEmail, Viewable
+final class Question extends Model implements Viewable
 {
     public static function incrementViews(array $ids): void
     {
         self::withoutTimestamps(function () use ($ids): void {
             self::query()
                 ->whereIn('id', $ids)
+                ->whereNotNull('answer')
                 ->increment('views');
         });
     }
 }
 ```
 
-[Laravel Contracts Documentation](https://laravel.com/docs/11.x/contracts)
-
-## 2. Job Pattern
-Jobs are used for handling background tasks and heavy operations outside the main request cycle.
+### 3. Job Pattern
+Jobs are used for handling background tasks and queued operations. They help improve application performance by processing heavy tasks asynchronously.
 
 Example from `App/Jobs/UpdateUserAvatar.php`:
 ```php
+// This job handles avatar updates in the background
 final class UpdateUserAvatar implements ShouldQueue
 {
     use Queueable;
 
-    // Constructor injects dependencies
     public function __construct(
         private readonly User $user,
         private readonly ?string $file = null,
         private readonly ?string $service = null
     ) {}
 
-    // Main job logic
     public function handle(): void
     {
         // Avatar processing logic
     }
-
-    // Error handling
-    public function failed(?Throwable $exception): void
-    {
-        // Cleanup on failure
-    }
 }
 ```
 
-Used in `App/Http/Controllers/UserAvatarController.php`:
+Usage in `App/Http/Controllers/UserAvatarController.php`:
 ```php
-// Dispatches the job synchronously
 UpdateUserAvatar::dispatchSync($user, $file->getRealPath());
 ```
 
-[Laravel Jobs Documentation](https://laravel.com/docs/11.x/queues)
+[Laravel Queues Documentation](https://laravel.com/docs/11.x/queues)
 
-## 3. Observer Pattern
-Observers handle model events like created, updated, and deleted, keeping logic organized and separated.
-
-Example from `App/Observers/QuestionObserver.php`:
-```php
-final readonly class QuestionObserver
-{
-    // Handles what happens after a question is created
-    public function created(Question $question): void
-    {
-        if ($question->isSharedUpdate()) {
-            // Handle shared update logic
-        } else {
-            // Handle normal question creation
-            $question->loadMissing('to');
-            $question->to->notify(new QuestionCreated($question));
-        }
-    }
-}
-```
-
-Used via attribute in `App/Models/Question.php`:
-```php
-#[ObservedBy(QuestionObserver::class)]
-final class Question extends Model implements Viewable
-```
-
-[Laravel Model Events Documentation](https://laravel.com/docs/11.x/eloquent#events)
-
-## 4. Policy Pattern
-Policies centralize authorization logic for models.
+### 4. Policy Pattern
+Policies are used to organize authorization logic around a particular model or resource.
 
 Example from `App/Policies/QuestionPolicy.php`:
 ```php
+// This policy defines authorization rules for Question-related actions
 final readonly class QuestionPolicy
 {
     // Determines if a user can view a question
@@ -116,149 +112,230 @@ final readonly class QuestionPolicy
 }
 ```
 
-Used in controllers via the Gate facade:
+Usage through Laravel's Gate facade:
 ```php
-// In QuestionController.php
 Gate::authorize('view', $question);
 ```
 
 [Laravel Authorization Documentation](https://laravel.com/docs/11.x/authorization)
 
-## 5. Command Pattern
-Artisan commands encapsulate CLI operations in dedicated classes.
+### 5. Repository Pattern with Eloquent
+While not explicitly using repository classes, the code uses Eloquent models as repositories, encapsulating data access logic.
+
+Example from `App/Models/User.php`:
+```php
+// Model acts as a repository, encapsulating data access logic
+final class User extends Authenticatable implements FilamentUser, MustVerifyEmail, Viewable
+{
+    public function following(): BelongsToMany
+    {
+        return $this->belongsToMany(self::class, 'followers', 'follower_id', 'user_id');
+    }
+
+    public function followers(): BelongsToMany
+    {
+        return $this->belongsToMany(self::class, 'followers', 'user_id', 'follower_id');
+    }
+}
+```
+
+### 6. Command Pattern
+Commands are used to encapsulate specific tasks that can be executed from the command line.
 
 Example from `App/Console/Commands/DeleteNonEmailVerifiedUsersCommand.php`:
 ```php
+// This command deletes unverified users after 24 hours
 final class DeleteNonEmailVerifiedUsersCommand extends Command
 {
-    // Command signature defines how to call it
     protected $signature = 'delete:non-email-verified-users';
-
-    // Main command logic
+    
     public function handle(): void
     {
         User::where('email_verified_at', null)
             ->where('updated_at', '<', now()->subDay())
             ->whereDoesntHave('links')
-            // ... additional conditions
-            ->each->purge();
+            ->get()
+            ->each
+            ->purge();
     }
 }
 ```
 
-[Laravel Artisan Commands Documentation](https://laravel.com/docs/11.x/artisan)
+[Laravel Artisan Console Documentation](https://laravel.com/docs/11.x/artisan)
 
-## 6. Service Pattern
-Services encapsulate complex business logic in dedicated classes.
+### 7. Notification Pattern
+Notifications are used to send various types of notifications across multiple channels.
 
-Example from `App/Services/ParsableContent.php` interface:
+Example from `App/Notifications/QuestionAnswered.php`:
 ```php
-interface ParsableContentProvider
+// This notification is sent when a question is answered
+final class QuestionAnswered extends Notification
 {
-    // Defines a contract for parsing content
-    public function parse(string $content): string;
-}
-```
+    use Queueable;
 
-Used in `App/Models/Question.php`:
-```php
-public function getContentAttribute(?string $value): ?string
-{
-    $content = new ParsableContent();
-    return $value !== null ? $content->parse($value) : null;
-}
-```
+    public function __construct(private Question $question) {}
 
-## 7. Enum Pattern
-Enums provide type-safe value constraints.
-
-Example from `App/Enums/UserMailPreference.php`:
-```php
-enum UserMailPreference: string
-{
-    case Daily = 'daily';
-    case Weekly = 'weekly';
-    case Never = 'never';
-
-    // Helper method to convert enum to array
-    public static function toArray(): array
+    public function via(object $notifiable): array
     {
+        return ['database'];
+    }
+}
+```
+
+Usage in `App/Observers/QuestionObserver.php`:
+```php
+$question->from->notify(new QuestionAnswered($question));
+```
+
+[Laravel Notifications Documentation](https://laravel.com/docs/11.x/notifications)
+
+### 8. Form Request Pattern
+Form requests are used to encapsulate validation logic for incoming HTTP requests.
+
+Example from `App/Http/Requests/UserUpdateRequest.php`:
+```php
+// This class handles validation for user updates
+final class UserUpdateRequest extends FormRequest
+{
+    public function rules(): array
+    {
+        $user = type($this->user())->as(User::class);
+
         return [
-            self::Daily->value => 'Daily',
-            self::Weekly->value => 'Weekly',
-            self::Never->value => 'Never',
+            'name' => ['required', 'string', 'max:255', new NoBlankCharacters],
+            'username' => [
+                'required', 'string', 'min:4', 'max:50', 
+                Rule::unique(User::class)->ignore($user->id),
+                new Username($user),
+            ],
         ];
     }
 }
 ```
 
-Used in `App/Models/User.php`:
+[Laravel Form Request Validation Documentation](https://laravel.com/docs/11.x/validation#form-request-validation)
+
+### 9. Service Pattern
+Services are used to encapsulate complex business logic.
+
+Example from `App/Services/ParsableContent.php` (referenced but not shown in provided code):
 ```php
-protected function casts(): array
+// Called from Question model to parse content
+public function getContentAttribute(?string $value): ?string
 {
-    return [
-        'mail_preference_time' => UserMailPreference::class,
-        // ... other casts
-    ];
+    $content = new ParsableContent();
+    return $value !== null && $value !== '' && $value !== '0' ? 
+        $content->parse($value) : null;
 }
 ```
 
-[Laravel Enums Documentation](https://laravel.com/docs/11.x/eloquent-mutators#enum-casting)
+### 10. Middleware Pattern
+Middleware provides a way to filter HTTP requests entering the application.
 
-## 8. Form Request Pattern
-Form requests handle validation logic separately from controllers.
+Example from `App/Http/Middleware/EnsureVerifiedEmailsForSignInUsers.php`:
+```php
+// This middleware ensures users have verified their email
+final readonly class EnsureVerifiedEmailsForSignInUsers
+{
+    public function handle(Request $request, Closure $next): Response
+    {
+        if (! auth()->check()) {
+            return $next($request);
+        }
 
-Example from `App/Http/Requests/UserAvatarUpdateRequest.php`:
+        $user = type($request->user())->as(User::class);
+
+        if ($user->hasVerifiedEmail()) {
+            return $next($request);
+        }
+
+        return to_route('verification.notice');
+    }
+}
+```
+
+[Laravel Middleware Documentation](https://laravel.com/docs/11.x/middleware)
+
+## Best Practices
+
+### 1. Type Declaration and Strict Typing
+```php
+declare(strict_types=1);
+
+final readonly class QuestionPolicy
+{
+    public function view(?User $user, Question $question): bool
+```
+
+### 2. Using Value Objects for Complex Types
+```php
+public function getAvatarUrlAttribute(): string
+{
+    return $this->avatar ? 
+        Storage::disk('public')->url($this->avatar) : 
+        asset('img/default-avatar.png');
+}
+```
+
+### 3. Single Responsibility Principle
+Each class has a single responsibility, as seen in the separation of concerns in the observers, jobs, and controllers.
+
+### 4. Using Dependency Injection
+```php
+public function handle(GitHub $github): void
+{
+    $user = type($this->user->fresh())->as(User::class);
+    // ...
+}
+```
+
+### 5. Using Form Requests for Validation
 ```php
 final class UserAvatarUpdateRequest extends FormRequest
 {
-    // Defines validation rules
     public function rules(): array
     {
         return [
             'avatar' => ['required', 'image', 'mimes:jpg,jpeg,png', 'max:2048'],
         ];
     }
-
-    // Custom error messages
-    public function messages(): array
-    {
-        return [
-            'avatar.max' => 'The avatar may not be greater than 2MB.',
-        ];
-    }
 }
 ```
 
-Used in `App/Http/Controllers/UserAvatarController.php`:
+## Smart Helper Functions Usage
+
+### 1. Collection Helper Methods
 ```php
-public function update(UserAvatarUpdateRequest $request): RedirectResponse
+collect($glob)
+    ->sort()
+    ->reverse()
+    ->slice(4)
+    ->each(fn (string $backup): bool => File::delete($backup));
 ```
 
-[Laravel Form Request Validation Documentation](https://laravel.com/docs/11.x/validation#form-request-validation)
+### 2. String Helper
+```php
+str($this->gradient)
+    ->match('/from-.*?\d{3}/')
+    ->after('from-')
+    ->value();
+```
 
-## Best Practices Observed
+### 3. Type Casting Helper
+```php
+$user = type($request->user())->as(User::class);
+```
 
-1. **Type Safety**
-    - Extensive use of type hints
-    - Strict types declaration
-    - Return type declarations
+### 4. Route Helper
+```php
+return to_route('profile.edit')
+    ->with('flash-message', 'Avatar updated.');
+```
 
-2. **Immutability**
-    - Use of `readonly` classes
-    - Final classes to prevent inheritance where not needed
-
-3. **Single Responsibility**
-    - Each class has a clear, focused purpose
-    - Logic is separated into appropriate layers (Controllers, Models, Services, etc.)
-
-4. **Dependency Injection**
-    - Constructor injection for required dependencies
-    - Type-hinted dependencies for better IDE support
-
-5. **Documentation**
-    - Clear PHPDoc blocks
-    - Property and return type documentation
-    - Relationship documentation in models
-
-These patterns demonstrate Laravel's emphasis on clean, maintainable, and well-structured code while providing robust solutions to common web development challenges.
+### 5. Config Helper
+```php
+if (collect(config()->array('sponsors.github_usernames'))
+    ->contains($this->username)) {
+    return true;
+}
+```
