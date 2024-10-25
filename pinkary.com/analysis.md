@@ -1,4 +1,6 @@
-# Lessons from the pinkary.com code
+# Coding tips from the pinkary.com code
+
+We asked Claude.ai to analyze some key files from the Pinkary codebase, and write up a set of tips. This was entirely written by Claude. You can find the prompt we used in this same directory.
 
 ## Design Patterns
 
